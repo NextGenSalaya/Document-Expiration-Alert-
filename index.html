@@ -1,0 +1,440 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<style>body{margin:0}[hidden]{display:none!important}</style>
+<title>แจ้งเตือนเอกสารหมดอายุ</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+Thai:wght@400;500;600;700&display=swap">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<style>
+/* Layout: one working column — header + upload, three document cards, filter bar, alert table */
+:root {
+  --bg: #f3f5f8; --surface: #ffffff; --fg: #17202c; --muted: #5a6574; --line: #dce1e8;
+  --accent: #1c4f8f; --accent-ink: #ffffff; --stamp: #f2d21b;
+  --crit: #c22b2b; --high: #cf5f0c; --warn: #9a7400; --watch: #3f6db3;
+  --font-body: "IBM Plex Sans Thai", "Leelawadee UI", "Tahoma", system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "Consolas", monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #0f131a; --surface: #171d26; --fg: #e5e9ef; --muted: #9aa4b2; --line: #2a323e;
+  --accent: #82abe8; --accent-ink: #0f131a; --stamp: #e8c929;
+  --crit: #f06c6c; --high: #f39a4d; --warn: #e3c24d; --watch: #86aeea; color-scheme: dark } }
+:root[data-theme="dark"] {
+  --bg: #0f131a; --surface: #171d26; --fg: #e5e9ef; --muted: #9aa4b2; --line: #2a323e;
+  --accent: #82abe8; --accent-ink: #0f131a; --stamp: #e8c929;
+  --crit: #f06c6c; --high: #f39a4d; --warn: #e3c24d; --watch: #86aeea; color-scheme: dark }
+
+* { box-sizing: border-box }
+body { background: var(--bg); color: var(--fg); font-family: var(--font-body); font-size: 15px; line-height: 1.55 }
+.wrap { max-width: 1280px; margin: 0 auto; padding-block: 28px 56px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
+  display: grid; gap: 20px }
+header.top { display: flex; flex-wrap: wrap; gap: 16px 24px; align-items: flex-end; justify-content: space-between }
+.eyebrow { font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); font-weight: 500 }
+h1 { margin: 2px 0 4px; font-size: clamp(24px, 3.2vw, 32px); line-height: 1.2; font-weight: 700; text-wrap: balance }
+.sub { color: var(--muted); margin: 0 }
+.sub b { color: var(--fg); font-weight: 600 }
+
+.upload { display: flex; flex-wrap: wrap; gap: 10px; align-items: center }
+.btn { font: inherit; font-weight: 600; border-radius: 8px; padding: 9px 16px; cursor: pointer; border: 1px solid var(--line);
+  background: var(--surface); color: var(--fg); display: inline-flex; gap: 8px; align-items: center }
+.btn.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent) }
+.btn:hover { filter: brightness(1.06) }
+.btn:focus-visible, .tab:focus-visible, .card:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px }
+.remember { font-size: 13px; color: var(--muted); display: inline-flex; gap: 6px; align-items: center; cursor: pointer }
+
+.source { border: 1px dashed var(--line); border-radius: 10px; padding: 12px 16px; display: flex; flex-wrap: wrap; gap: 6px 18px;
+  align-items: center; font-size: 14px; color: var(--muted); background: var(--surface) }
+.source.sample { border-color: var(--warn); border-style: solid; background: color-mix(in srgb, var(--warn) 9%, var(--surface)); color: var(--fg) }
+.source.error { border-color: var(--crit); border-style: solid; background: color-mix(in srgb, var(--crit) 8%, var(--surface)); color: var(--fg) }
+.source strong { color: var(--fg) }
+.source .warnline { color: var(--high); flex-basis: 100% }
+body.dragging .source { border-color: var(--accent); border-style: solid }
+
+.cards { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px }
+@media (max-width: 760px) { .cards { grid-template-columns: 1fr } }
+.card { text-align: left; font: inherit; color: inherit; background: var(--surface); border: 1px solid var(--line); border-radius: 12px;
+  padding: 16px 18px 14px; cursor: pointer; display: grid; gap: 8px; position: relative; overflow: hidden }
+.card::before { content: ""; position: absolute; inset: 0 0 auto 0; height: 5px; background: var(--stamp) }
+.card[aria-pressed="true"] { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent) }
+.card .head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px }
+.card .name { font-weight: 700; font-size: 17px }
+.card .th { color: var(--muted); font-size: 13px }
+.card .big { font-family: var(--font-mono); font-size: 38px; font-weight: 500; line-height: 1; font-variant-numeric: tabular-nums }
+.card .big small { font-family: var(--font-body); font-size: 14px; color: var(--muted); font-weight: 400; margin-left: 6px }
+.card .split { display: flex; flex-wrap: wrap; gap: 6px }
+
+.chip { display: inline-flex; align-items: center; gap: 5px; font-size: 12.5px; font-weight: 600; border-radius: 999px; padding: 2px 10px;
+  white-space: nowrap; font-variant-numeric: tabular-nums }
+.chip::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: currentColor }
+.chip.crit { color: var(--crit); background: color-mix(in srgb, var(--crit) 13%, transparent) }
+.chip.high { color: var(--high); background: color-mix(in srgb, var(--high) 13%, transparent) }
+.chip.warn { color: var(--warn); background: color-mix(in srgb, var(--warn) 14%, transparent) }
+.chip.watch { color: var(--watch); background: color-mix(in srgb, var(--watch) 12%, transparent) }
+
+.panel { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; display: grid; min-width: 0 }
+.bar { display: flex; flex-wrap: wrap; gap: 10px 14px; align-items: center; justify-content: space-between; padding: 12px 14px; border-bottom: 1px solid var(--line) }
+.tabs { display: flex; flex-wrap: wrap; gap: 4px; background: var(--bg); padding: 4px; border-radius: 9px }
+.tab { font: inherit; font-size: 14px; font-weight: 600; border: 0; background: transparent; color: var(--muted); padding: 6px 12px; border-radius: 6px; cursor: pointer }
+.tab[aria-selected="true"] { background: var(--surface); color: var(--fg); box-shadow: 0 1px 2px rgba(0,0,0,.12) }
+.tab .n { font-family: var(--font-mono); font-weight: 500; margin-left: 4px; color: var(--muted) }
+.filters { display: flex; flex-wrap: wrap; gap: 10px 14px; align-items: center; font-size: 14px }
+.filters label { display: inline-flex; gap: 6px; align-items: center; color: var(--muted) }
+.filters input[type="search"], .filters input[type="number"] { font: inherit; color: var(--fg); background: var(--bg); border: 1px solid var(--line);
+  border-radius: 7px; padding: 6px 10px }
+.filters input[type="search"] { width: 220px; max-width: 100% }
+.filters input[type="number"] { width: 76px; font-family: var(--font-mono) }
+
+.tablebox { overflow-x: auto; min-width: 0 }
+table { border-collapse: collapse; width: 100%; font-size: 14px; min-width: 980px }
+th, td { padding: 10px 12px; white-space: nowrap; text-align: left; border-bottom: 1px solid var(--line); vertical-align: middle }
+th { font-size: 12.5px; font-weight: 600; color: var(--muted); background: var(--bg); position: sticky; top: 0; white-space: nowrap }
+td.mono, td .mono { font-family: var(--font-mono); font-size: 13px; font-variant-numeric: tabular-nums }
+td.days { font-family: var(--font-mono); text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap }
+th.days { text-align: right }
+tr.crit td:first-child { box-shadow: inset 4px 0 0 var(--crit) }
+tr.high td:first-child { box-shadow: inset 4px 0 0 var(--high) }
+tr.warn td:first-child { box-shadow: inset 4px 0 0 var(--warn) }
+tr.watch td:first-child { box-shadow: inset 4px 0 0 var(--watch) }
+tbody tr:hover td { background: color-mix(in srgb, var(--accent) 5%, transparent) }
+.doc-tag { font-weight: 600; white-space: nowrap }
+.empty { padding: 40px 16px; text-align: center; color: var(--muted) }
+.foot { display: flex; flex-wrap: wrap; gap: 8px 16px; justify-content: space-between; align-items: center; padding: 10px 14px; font-size: 13px; color: var(--muted) }
+.legend { display: flex; flex-wrap: wrap; gap: 6px }
+.toast { position: fixed; bottom: calc(18px + env(safe-area-inset-bottom, 0px)); left: 50%; transform: translateX(-50%); background: var(--fg); color: var(--bg);
+  padding: 8px 16px; border-radius: 8px; font-size: 14px; opacity: 0; transition: opacity .2s; pointer-events: none }
+.toast.show { opacity: 1 }
+textarea.copybuf { position: fixed; left: -9999px; top: 0 }
+@media (prefers-reduced-motion: reduce) { .toast { transition: none } }
+</style>
+
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <div>
+      <div class="eyebrow">HR · เอกสารพนักงานต่างชาติ</div>
+      <h1>แจ้งเตือนเอกสารหมดอายุ</h1>
+      <p class="sub">Work Permit · Passport · Visa แจ้งล่วงหน้า <b id="daysLabel">90</b> วัน · วันนี้ <b id="todayLabel"></b></p>
+    </div>
+    <div class="upload">
+      <input type="file" id="fileInput" accept=".xlsx,.xlsm,.xls,.csv" hidden>
+      <button class="btn primary" id="uploadBtn" type="button">อัปโหลดไฟล์ Excel</button>
+      <label class="remember"><input type="checkbox" id="rememberChk"> จำไฟล์ล่าสุดไว้ในเบราว์เซอร์นี้</label>
+    </div>
+  </header>
+
+  <div class="source sample" id="source"></div>
+
+  <section class="cards" id="cards"></section>
+
+  <section class="panel">
+    <div class="bar">
+      <div class="tabs" role="tablist" id="tabs"></div>
+      <div class="filters">
+        <label for="daysInput">แจ้งล่วงหน้า <input type="number" id="daysInput" min="1" max="730" value="90"> วัน</label>
+        <label><input type="checkbox" id="expiredChk" checked> รวมที่หมดอายุแล้ว</label>
+        <input type="search" id="searchInput" placeholder="ค้นหา ID, ชื่อ, หน่วยงาน, เลขที่" aria-label="ค้นหา">
+        <button class="btn" id="copyBtn" type="button">คัดลอกตาราง</button>
+      </div>
+    </div>
+    <div class="tablebox"><table id="table"><thead></thead><tbody></tbody></table></div>
+    <div class="empty" id="empty" hidden>ไม่มีเอกสารที่จะหมดอายุในช่วงนี้</div>
+    <div class="foot">
+      <div class="legend">
+        <span class="chip crit">หมดอายุแล้ว</span><span class="chip high">≤ 30 วัน</span><span class="chip warn">31–60 วัน</span><span class="chip watch">61 วันขึ้นไป</span>
+      </div>
+      <span id="countLabel"></span>
+    </div>
+  </section>
+</div>
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+<script>
+(() => {
+const DOCS = [
+  { key: 'wp',   col: 'wpExp',   label: 'Work Permit', th: 'ใบอนุญาตทำงาน' },
+  { key: 'pp',   col: 'ppExp',   label: 'Passport',    th: 'หนังสือเดินทาง' },
+  { key: 'visa', col: 'visaExp', label: 'Visa',        th: 'วีซ่า' },
+];
+const FIELDS = [
+  ['psid', 'PeopleSoft ID', true], ['prefix', 'คำนำหน้าชื่อ (อังกฤษ)'], ['nameTh', 'ชื่อ (ไทย)'], ['dept', 'หน่วยงานปัจจุบัน'],
+  ['passportNo', 'เลขที่หนังสือเดินทาง', true], ['alienId', 'เลขประจำตัวคนต่างด้าว', true], ['wpNo', 'ใบอนุญาตทำงานเลขที่', true],
+];
+const norm = s => String(s ?? '').toLowerCase().replace(/[\s​ ]+/g, '');
+// Order matters: expiry columns first so "Passport หมดอายุ" never lands in a number column.
+const MATCHERS = [
+  ['wpExp',      h => h.includes('workpermit') && h.includes('หมดอายุ')],
+  ['ppExp',      h => h.includes('passport') && h.includes('หมดอายุ')],
+  ['visaExp',    h => h.includes('visa') && h.includes('หมดอายุ')],
+  ['psid',       h => h.includes('peoplesoft')],
+  ['prefix',     h => h.includes('คำนำหน้า')],
+  ['nameTh',     h => h.startsWith('ชื่อ') && h.includes('ไทย')],
+  ['dept',       h => h.includes('หน่วยงาน')],
+  ['passportNo', h => h.includes('เลขที่หนังสือเดินทาง') || h.includes('หนังสือเดินทางเลขที่')],
+  ['alienId',    h => h.includes('คนต่างด้าว')],
+  ['wpNo',       h => h.includes('ใบอนุญาตทำงานเลขที่') || h.includes('เลขที่ใบอนุญาตทำงาน')],
+];
+const LABELS = { wpExp: 'Work Permit หมดอายุ', ppExp: 'Passport หมดอายุ', visaExp: 'Visa หมดอายุ' };
+FIELDS.forEach(([k, l]) => LABELS[k] = l);
+
+const MONTHS = {
+  'ม.ค.':1,'มกราคม':1,'ก.พ.':2,'กุมภาพันธ์':2,'มี.ค.':3,'มีนาคม':3,'เม.ย.':4,'เมษายน':4,'พ.ค.':5,'พฤษภาคม':5,'มิ.ย.':6,'มิถุนายน':6,
+  'ก.ค.':7,'กรกฎาคม':7,'ส.ค.':8,'สิงหาคม':8,'ก.ย.':9,'กันยายน':9,'ต.ค.':10,'ตุลาคม':10,'พ.ย.':11,'พฤศจิกายน':11,'ธ.ค.':12,'ธันวาคม':12,
+  jan:1,feb:2,mar:3,apr:4,may:5,jun:6,jul:7,aug:8,sep:9,sept:9,oct:10,nov:11,dec:12,
+};
+const monthOf = s => { s = s.toLowerCase().trim(); if (MONTHS[s]) return MONTHS[s];
+  const noDot = s.replace(/\./g, ''); for (const k in MONTHS) if (k.replace(/\./g, '') === noDot) return MONTHS[k];
+  if (MONTHS[s.slice(0, 3)]) return MONTHS[s.slice(0, 3)]; return 0; };
+function mk(y, m, d) {
+  if (y > 2400) y -= 543;               // พ.ศ. → ค.ศ.
+  if (y < 100) y += 2000;
+  const dt = new Date(y, m - 1, d);
+  return (dt.getFullYear() === y && dt.getMonth() === m - 1 && dt.getDate() === d) ? dt : null;
+}
+function parseDate(v) {
+  if (v === null || v === undefined || v === '') return null;
+  if (v instanceof Date) return isNaN(v) ? null : mk(v.getFullYear(), v.getMonth() + 1, v.getDate());
+  if (typeof v === 'number') {
+    if (v < 60 || v > 2958465) return null;
+    const u = new Date(Math.round((v - 25569) * 864e5));
+    return mk(u.getUTCFullYear(), u.getUTCMonth() + 1, u.getUTCDate());
+  }
+  const s = String(v).trim();
+  if (!s || /^[-–—]+$/.test(s)) return null;
+  let m;
+  if ((m = s.match(/^(\d{4})[\/\-.](\d{1,2})[\/\-.](\d{1,2})/))) return mk(+m[1], +m[2], +m[3]);
+  if ((m = s.match(/^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{2,4})$/))) return mk(+m[3], +m[2], +m[1]);
+  if ((m = s.match(/^(\d{1,2})[\s\-\/]*([^\d\s\-\/]+)[\s\-\/,]*(\d{2,4})$/))) { const mo = monthOf(m[2]); if (mo) return mk(+m[3], mo, +m[1]); }
+  if (/^\d+(\.\d+)?$/.test(s)) return parseDate(+s);
+  const t = Date.parse(s); if (!isNaN(t)) { const d = new Date(t); return mk(d.getFullYear(), d.getMonth() + 1, d.getDate()); }
+  return null;
+}
+
+// ---------- reading the workbook ----------
+function findHeader(rows) {
+  const lim = Math.min(rows.length, 40);
+  for (let r = 0; r < lim; r++) if ((rows[r] || []).some(c => norm(c).includes('peoplesoft'))) return r;
+  return -1;
+}
+function mapColumns(rows, r) {
+  const map = {};
+  const width = Math.max(...[r - 1, r, r + 1].map(i => (rows[i] || []).length));
+  const tryRow = getText => {
+    for (const [key, fn] of MATCHERS) {
+      if (key in map) continue;
+      for (let c = 0; c < width; c++) {
+        if (Object.values(map).includes(c)) continue;
+        if (fn(getText(c))) { map[key] = c; break; }
+      }
+    }
+  };
+  tryRow(c => norm(rows[r]?.[c]));
+  tryRow(c => norm(rows[r - 1]?.[c]) + norm(rows[r]?.[c]));   // two-row headers
+  tryRow(c => norm(rows[r]?.[c]) + norm(rows[r + 1]?.[c]));
+  return map;
+}
+function readWorkbook(buf) {
+  const wb = XLSX.read(buf, { type: 'array' });
+  for (const name of wb.SheetNames) {
+    const ws = wb.Sheets[name];
+    const raw = XLSX.utils.sheet_to_json(ws, { header: 1, raw: true, defval: '' });
+    const r = findHeader(raw);
+    if (r < 0) continue;
+    const fmt = XLSX.utils.sheet_to_json(ws, { header: 1, raw: false, defval: '' });
+    const map = mapColumns(raw, r);
+    const people = [];
+    for (let i = r + 1; i < raw.length; i++) {
+      const rr = raw[i] || [], fr = fmt[i] || [];
+      const txt = k => map[k] === undefined ? '' : String(fr[map[k]] ?? '').trim();
+      const p = {};
+      FIELDS.forEach(([k]) => p[k] = txt(k));
+      if (!p.psid && !p.nameTh) continue;
+      if (norm(p.psid).includes('peoplesoft')) continue;
+      DOCS.forEach(d => { const c = map[d.col]; p[d.col] = c === undefined ? null : (parseDate(rr[c]) || parseDate(fr[c])); });
+      people.push(p);
+    }
+    const missing = Object.keys(LABELS).filter(k => !(k in map)).map(k => LABELS[k]);
+    return { sheet: name, people, missing };
+  }
+  throw new Error('ไม่พบหัวคอลัมน์ "PeopleSoft ID" ในไฟล์นี้ ตรวจสอบว่าเป็นไฟล์รายชื่อพนักงานที่ถูกต้อง');
+}
+
+// ---------- state ----------
+const $ = id => document.getElementById(id);
+const store = {
+  get(k) { try { return localStorage.getItem(k); } catch { return null; } },
+  set(k, v) { try { localStorage.setItem(k, v); } catch {} },
+  del(k) { try { localStorage.removeItem(k); } catch {} },
+};
+const today = new Date(); today.setHours(0, 0, 0, 0);
+const DAY = 864e5;
+const daysLeft = d => Math.round((new Date(d.getFullYear(), d.getMonth(), d.getDate()) - today) / DAY);
+const plus = n => new Date(today.getTime() + n * DAY);
+
+const ui = { tab: 'all', days: +(store.get('exp.days') || 90) || 90, q: '', showExpired: store.get('exp.showExpired') !== '0' };
+let data = sampleData();
+
+function sampleData() {
+  const P = (psid, prefix, nameTh, dept, passportNo, alienId, wpNo, wp, pp, visa) =>
+    ({ psid, prefix, nameTh, dept, passportNo, alienId, wpNo, wpExp: wp == null ? null : plus(wp), ppExp: pp == null ? null : plus(pp), visaExp: visa == null ? null : plus(visa) });
+  return { source: 'sample', fileName: '', sheet: '', missing: [], loadedAt: null, people: [
+    P('10023451', 'Mr.',  'ไมเคิล บราวน์',      'ฝ่ายวิศวกรรม',   'C4X81273', '0012345678901', 'WP-2566-00128', 12, 410, 12),
+    P('10023988', 'Ms.',  'อันนา ชมิดท์',       'ฝ่ายบัญชี',      'L9083321', '0012345678902', 'WP-2566-00217', 48, 75, 48),
+    P('10024105', 'Mr.',  'ทานากะ ฮิโรชิ',      'ฝ่ายผลิต',       'TR558190', '0012345678903', 'WP-2567-00044', 160, -6, 160),
+    P('10024377', 'Mr.',  'เหงียน วัน อัน',     'ฝ่ายคลังสินค้า',  'B7712045', '0012345678904', 'WP-2567-00102', 84, 900, 84),
+    P('10024590', 'Mrs.', 'มาเรีย การ์เซีย',     'ฝ่ายทรัพยากรบุคคล', 'XD402218', '0012345678905', 'WP-2567-00175', 220, 33, 220),
+    P('10024812', 'Mr.',  'ราจ ปาเทล',          'ฝ่ายไอที',       'Z3304587', '0012345678906', 'WP-2568-00009', -15, 540, 66),
+    P('10025033', 'Ms.',  'ซู ลี่ หมิง',         'ฝ่ายวิศวกรรม',   'EH991032', '0012345678907', 'WP-2568-00061', 300, 610, 27),
+  ] };
+}
+
+// ---------- rendering ----------
+const fmtDate = d => d.toLocaleDateString('th-TH', { day: 'numeric', month: 'short', year: 'numeric' });
+const level = n => n < 0 ? 'crit' : n <= 30 ? 'high' : n <= 60 ? 'warn' : 'watch';
+const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const daysText = n => n < 0 ? `เลยมา ${-n} วัน` : n === 0 ? 'หมดวันนี้' : `อีก ${n} วัน`;
+
+function allItems() {
+  const out = [];
+  for (const p of data.people) for (const d of DOCS) {
+    const dt = p[d.col]; if (!dt) continue;
+    const n = daysLeft(dt);
+    if (n > ui.days) continue;
+    if (n < 0 && !ui.showExpired) continue;
+    out.push({ p, d, dt, n });
+  }
+  return out.sort((a, b) => a.n - b.n);
+}
+function matches(it) {
+  if (!ui.q) return true;
+  const q = norm(ui.q);
+  return FIELDS.some(([k]) => norm(it.p[k]).includes(q)) || norm(it.d.label).includes(q);
+}
+
+function render() {
+  $('daysLabel').textContent = ui.days;
+  $('todayLabel').textContent = fmtDate(today);
+  const items = allItems();
+
+  // source line
+  const src = $('source');
+  if (data.source === 'sample') {
+    src.className = 'source sample';
+    src.innerHTML = '<span><strong>ข้อมูลตัวอย่าง</strong> รายชื่อด้านล่างไม่ใช่ข้อมูลจริง กด "อัปโหลดไฟล์ Excel" หรือลากไฟล์มาวางที่หน้านี้เพื่อดูรายการของคุณ</span>';
+  } else {
+    src.className = 'source';
+    const when = data.loadedAt ? new Date(data.loadedAt).toLocaleString('th-TH', { dateStyle: 'medium', timeStyle: 'short' }) : '';
+    src.innerHTML = `<span>ไฟล์ <strong>${esc(data.fileName)}</strong>${data.sheet ? ` · ชีต ${esc(data.sheet)}` : ''}</span>
+      <span>อ่านได้ <strong>${data.people.length.toLocaleString()}</strong> คน</span><span>อัปโหลดเมื่อ ${esc(when)}</span>
+      <span>อัปโหลดไฟล์ใหม่ได้ทุกเมื่อเพื่ออัปเดตรายการ</span>` +
+      (data.missing.length ? `<span class="warnline">ไม่พบคอลัมน์: ${data.missing.map(esc).join(', ')}</span>` : '');
+  }
+
+  // cards
+  $('cards').innerHTML = DOCS.map(d => {
+    const mine = items.filter(i => i.d === d);
+    const soon = mine.filter(i => i.n >= 0).length, urgent = mine.filter(i => i.n >= 0 && i.n <= 30).length, exp = mine.filter(i => i.n < 0).length;
+    return `<button class="card" type="button" data-tab="${d.key}" aria-pressed="${ui.tab === d.key}">
+      <div class="head"><span class="name">${d.label} หมดอายุ</span><span class="th">${d.th}</span></div>
+      <div class="big">${soon}<small>คน ใกล้หมดอายุใน ${ui.days} วัน</small></div>
+      <div class="split">${urgent ? `<span class="chip high">≤ 30 วัน ${urgent}</span>` : ''}${exp ? `<span class="chip crit">หมดอายุแล้ว ${exp}</span>` : ''}${!urgent && !exp ? '<span class="chip watch">ไม่มีรายการด่วน</span>' : ''}</div>
+    </button>`;
+  }).join('');
+
+  // tabs
+  const counts = { all: items.length }; DOCS.forEach(d => counts[d.key] = items.filter(i => i.d === d).length);
+  $('tabs').innerHTML = [['all', 'ทั้งหมด'], ...DOCS.map(d => [d.key, d.label])].map(([k, l]) =>
+    `<button class="tab" role="tab" type="button" data-tab="${k}" aria-selected="${ui.tab === k}">${l}<span class="n">${counts[k]}</span></button>`).join('');
+
+  // table
+  const rows = items.filter(i => ui.tab === 'all' || i.d.key === ui.tab).filter(matches);
+  const showDoc = ui.tab === 'all';
+  $('table').tHead.innerHTML = `<tr>${showDoc ? '<th>เอกสาร</th>' : ''}${FIELDS.map(([, l]) => `<th>${l}</th>`).join('')}<th>วันหมดอายุ</th><th class="days">คงเหลือ</th><th>สถานะ</th></tr>`;
+  $('table').tBodies[0].innerHTML = rows.map(it => {
+    const lv = level(it.n);
+    return `<tr class="${lv}">${showDoc ? `<td class="doc-tag">${it.d.label}</td>` : ''}${FIELDS.map(([k, , mono]) => `<td${mono ? ' class="mono"' : ''}>${esc(it.p[k]) || '–'}</td>`).join('')}
+      <td style="white-space:nowrap">${fmtDate(it.dt)}</td><td class="days">${daysText(it.n)}</td>
+      <td><span class="chip ${lv}">${lv === 'crit' ? 'หมดอายุแล้ว' : lv === 'high' ? 'ด่วน' : lv === 'warn' ? 'เตรียมต่ออายุ' : 'เฝ้าระวัง'}</span></td></tr>`;
+  }).join('');
+  $('empty').hidden = rows.length > 0;
+  $('table').hidden = rows.length === 0;
+  $('countLabel').textContent = `แสดง ${rows.length} รายการ`;
+  render.current = rows;
+}
+
+// ---------- events ----------
+function setTab(t) { ui.tab = t; render(); }
+document.addEventListener('click', e => { const b = e.target.closest('[data-tab]'); if (b) setTab(b.dataset.tab); });
+$('daysInput').value = ui.days;
+$('expiredChk').checked = ui.showExpired;
+$('daysInput').addEventListener('input', e => { const v = Math.max(1, Math.min(730, Math.round(+e.target.value || 0))); if (!e.target.value) return; ui.days = v; store.set('exp.days', v); render(); });
+$('expiredChk').addEventListener('change', e => { ui.showExpired = e.target.checked; store.set('exp.showExpired', e.target.checked ? '1' : '0'); render(); });
+$('searchInput').addEventListener('input', e => { ui.q = e.target.value.trim(); render(); });
+$('uploadBtn').addEventListener('click', () => $('fileInput').click());
+$('fileInput').addEventListener('change', e => { const f = e.target.files[0]; if (f) loadFile(f); e.target.value = ''; });
+
+$('rememberChk').checked = store.get('exp.remember') === '1';
+$('rememberChk').addEventListener('change', e => {
+  if (e.target.checked) { store.set('exp.remember', '1'); if (data.source === 'file') saveData(); toast('จะจำไฟล์ล่าสุดไว้ในเบราว์เซอร์นี้'); }
+  else { store.del('exp.remember'); store.del('exp.data'); toast('ลบข้อมูลที่จำไว้แล้ว'); }
+});
+
+let dragDepth = 0;
+addEventListener('dragenter', e => { e.preventDefault(); dragDepth++; document.body.classList.add('dragging'); });
+addEventListener('dragleave', () => { if (--dragDepth <= 0) { dragDepth = 0; document.body.classList.remove('dragging'); } });
+addEventListener('dragover', e => e.preventDefault());
+addEventListener('drop', e => { e.preventDefault(); dragDepth = 0; document.body.classList.remove('dragging');
+  const f = e.dataTransfer?.files?.[0]; if (f) loadFile(f); });
+
+function loadFile(f) {
+  const rd = new FileReader();
+  rd.onload = () => {
+    try {
+      const res = readWorkbook(new Uint8Array(rd.result));
+      data = { source: 'file', fileName: f.name, sheet: res.sheet, missing: res.missing, people: res.people, loadedAt: Date.now() };
+      if (store.get('exp.remember') === '1') saveData();
+      ui.tab = 'all'; render();
+      toast(`โหลด ${res.people.length} คน จาก ${f.name}`);
+    } catch (err) {
+      const src = $('source'); src.className = 'source error';
+      src.innerHTML = `<span><strong>อ่านไฟล์ไม่ได้</strong> ${esc(err.message || err)}</span>`;
+    }
+  };
+  rd.readAsArrayBuffer(f);
+}
+function saveData() {
+  const ser = { ...data, people: data.people.map(p => { const o = { ...p }; DOCS.forEach(d => o[d.col] = p[d.col] ? [p[d.col].getFullYear(), p[d.col].getMonth() + 1, p[d.col].getDate()] : null); return o; }) };
+  store.set('exp.data', JSON.stringify(ser));
+}
+function restoreData() {
+  if (store.get('exp.remember') !== '1') return;
+  try {
+    const s = JSON.parse(store.get('exp.data') || 'null'); if (!s || !s.people) return;
+    s.people.forEach(p => DOCS.forEach(d => p[d.col] = p[d.col] ? new Date(p[d.col][0], p[d.col][1] - 1, p[d.col][2]) : null));
+    data = s;
+  } catch {}
+}
+
+$('copyBtn').addEventListener('click', () => {
+  const rows = render.current || [];
+  const head = ['เอกสาร', ...FIELDS.map(([, l]) => l), 'วันหมดอายุ', 'คงเหลือ (วัน)'];
+  const tsv = [head, ...rows.map(it => [it.d.label, ...FIELDS.map(([k]) => it.p[k]), fmtDate(it.dt), it.n])]
+    .map(r => r.map(c => String(c ?? '').replace(/[\t\n]/g, ' ')).join('\t')).join('\n');
+  const fallback = () => { const ta = document.createElement('textarea'); ta.className = 'copybuf'; ta.value = tsv; document.body.appendChild(ta); ta.select();
+    let ok = false; try { ok = document.execCommand('copy'); } catch {} ta.remove(); toast(ok ? `คัดลอก ${rows.length} รายการแล้ว วางใน Excel หรืออีเมลได้` : 'คัดลอกไม่สำเร็จ'); };
+  try { navigator.clipboard.writeText(tsv).then(() => toast(`คัดลอก ${rows.length} รายการแล้ว วางใน Excel หรืออีเมลได้`), fallback); } catch { fallback(); }
+});
+
+let tt; function toast(msg) { const t = $('toast'); t.textContent = msg; t.classList.add('show'); clearTimeout(tt); tt = setTimeout(() => t.classList.remove('show'), 2600); }
+
+window.__expiry = { parseDate, readWorkbook };
+restoreData();
+render();
+})();
+</script>
+
+</body>
+</html>
