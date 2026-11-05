@@ -12,6 +12,7 @@ const CONFIG = {
   INCLUDE_EXPIRED: true,      // รวมเอกสารที่หมดอายุแล้วด้วย
   INCLUDE_DOC_NUMBERS: false, // true = ส่งเลขหนังสือเดินทาง / เลขคนต่างด้าว / เลขใบอนุญาตทำงานไปใน LINE ด้วย
   SKIP_IF_EMPTY: true,        // ไม่ส่งถ้าไม่มีรายการ
+  MESSAGE_STYLE: 'card',      // 'card' = การ์ดสรุป (Flex Message) · 'text' = ข้อความตัวหนังสือ
   SEND_HOUR: 8,               // เวลาส่งอัตโนมัติ (ชั่วโมง 0-23)
   SHEET_NAME: '',             // ว่างไว้ = หาชีตที่มีคอลัมน์ "PeopleSoft ID" ให้เอง
   WEB_URL: 'https://nextgensalaya.github.io/Document-Expiration-Alert-/',
@@ -62,10 +63,13 @@ function onOpen() {
 }
 
 function previewAlerts() {
-  const { messages, total } = buildFromSheet_();
+  const { messages, cards, total } = buildFromSheet_();
   const text = messages.length ? messages.join('\n\n────────── (ข้อความถัดไป) ──────────\n\n') : 'ไม่มีเอกสารที่จะหมดอายุในช่วงนี้';
+  const style = CONFIG.MESSAGE_STYLE === 'card'
+    ? `ส่งเป็นการ์ด ${cards.reduce((s, m) => s + m.contents.contents.length, 0)} ใบ (${cards.length} ข้อความ LINE) · ด้านล่างคือเนื้อหาเดียวกันแบบตัวหนังสือ`
+    : `${messages.length} ข้อความ LINE`;
   const html = HtmlService.createHtmlOutput(
-    '<div style="font:14px/1.5 sans-serif"><p><b>' + total + ' รายการ · ' + messages.length + ' ข้อความ LINE</b></p>' +
+    '<div style="font:14px/1.5 sans-serif"><p><b>' + total + ' รายการ · ' + esc_(style) + '</b></p>' +
     '<pre style="white-space:pre-wrap;font:13px/1.5 sans-serif;background:#f4f5f7;padding:12px;border-radius:8px">' + esc_(text) + '</pre></div>')
     .setWidth(640).setHeight(560);
   SpreadsheetApp.getUi().showModalDialog(html, 'ตัวอย่างข้อความ LINE');
@@ -74,24 +78,38 @@ function previewAlerts() {
 function sendAlertsNow() {
   const ui = SpreadsheetApp.getUi();
   const r = sendAlerts_();
-  ui.alert(r.sent ? `ส่งแล้ว ${r.total} รายการ (${r.messages} ข้อความ) ไปที่ ${r.target}` : 'ไม่มีรายการที่ต้องแจ้ง จึงไม่ได้ส่ง');
+  ui.alert(r.sent ? `ส่งแล้ว ${r.total} รายการ (${r.messages}) ไปที่ ${r.target}` : 'ไม่มีรายการที่ต้องแจ้ง จึงไม่ได้ส่ง');
 }
 
 /** ตัวที่ trigger อัตโนมัติเรียกใช้ */
 function sendAlertsScheduled() { sendAlerts_(); }
 
 function sendAlerts_() {
-  const { messages, total } = buildFromSheet_();
+  const { messages, cards, total } = buildFromSheet_();
   const target = PropertiesService.getScriptProperties().getProperty('TARGET_ID');
   if (!messages.length && CONFIG.SKIP_IF_EMPTY) return { sent: false, total: 0 };
-  const msgs = messages.length ? messages : ['✅ ไม่มีเอกสารที่จะหมดอายุภายใน ' + CONFIG.DAYS_AHEAD + ' วัน'];
+  const textMsgs = (messages.length ? messages : ['✅ ไม่มีเอกสารที่จะหมดอายุภายใน ' + CONFIG.DAYS_AHEAD + ' วัน'])
+    .map(t => ({ type: 'text', text: t }));
+  let msgs = textMsgs, style = 'ข้อความ';
+  if (CONFIG.MESSAGE_STYLE === 'card' && cards.length) {
+    // Ask LINE to check the cards first (sends nothing); fall back to plain text if they are rejected.
+    try {
+      for (let i = 0; i < cards.length; i += 5) {
+        const batch = cards.slice(i, i + 5);
+        linePost_(target ? 'validate/push' : 'validate/broadcast', { messages: batch });
+      }
+      msgs = cards; style = 'การ์ด';
+    } catch (err) {
+      console.warn('LINE rejected the card layout, sending text instead: ' + err.message);
+    }
+  }
   for (let i = 0; i < msgs.length; i += 5) { // LINE accepts up to 5 messages per request
-    const batch = msgs.slice(i, i + 5).map(t => ({ type: 'text', text: t }));
+    const batch = msgs.slice(i, i + 5);
     if (target) linePost_('push', { to: target, messages: batch });
     else linePost_('broadcast', { messages: batch });
   }
   PropertiesService.getScriptProperties().setProperty('LAST_SENT', new Date().toISOString());
-  return { sent: true, total, messages: msgs.length, target: target ? 'กลุ่ม/ผู้รับที่ลงทะเบียนไว้' : 'ทุกคนที่แอดบอทเป็นเพื่อน' };
+  return { sent: true, total, messages: msgs.length + ' ' + style, target: target ? 'กลุ่ม/ผู้รับที่ลงทะเบียนไว้' : 'ทุกคนที่แอดบอทเป็นเพื่อน' };
 }
 
 // ---------------- reading the sheet ----------------
@@ -106,7 +124,7 @@ function buildFromSheet_() {
     if (findHeader_(disp) < 0) continue;
     const today = ymd_(new Date(), tz);
     const items = collectAlerts_(raw, disp, today, d => ymd_(d, tz));
-    return { messages: buildMessages_(items, today), total: items.length };
+    return { messages: buildMessages_(items, today), cards: buildCards_(items, today), total: items.length };
   }
   throw new Error('ไม่พบคอลัมน์ "PeopleSoft ID" ในชีตใดเลย ตรวจสอบว่านำเข้าไฟล์ถูกต้อง');
 }
@@ -169,6 +187,93 @@ function buildMessages_(items, today) {
   });
   if (cur.trim()) out.push(cur.replace(/\n+$/, ''));
   return out;
+}
+
+// ---------------- LINE cards (Flex Message) ----------------
+const CARD = { navy: '#1C4F8F', yellow: '#F2D21B', ink: '#17202C', muted: '#5A6574', faint: '#8A94A3',
+  crit: '#D93025', high: '#E8710A', warn: '#B8860B', watch: '#3F6DB3' };
+const ROWS_PER_CARD = 15;
+
+function buildCards_(items, today) {
+  if (!items.length) return [];
+  const color = n => n < 0 ? CARD.crit : n <= 30 ? CARD.high : n <= 60 ? CARD.warn : CARD.watch;
+  const when = n => n < 0 ? `เลย ${-n} วัน` : n === 0 ? 'หมดวันนี้' : `อีก ${n} วัน`;
+  const txt = (text, o) => Object.assign({ type: 'text', text: String(text || '-') }, o || {});
+
+  // card 1: summary per document type
+  const counts = DOCS.map(d => {
+    const m = items.filter(i => i.doc === d);
+    return { d, all: m.length, exp: m.filter(i => i.n < 0).length, urg: m.filter(i => i.n >= 0 && i.n <= 30).length };
+  });
+  const summaryRows = [];
+  counts.forEach((c, idx) => {
+    if (idx) summaryRows.push({ type: 'separator', margin: 'md' });
+    summaryRows.push({ type: 'box', layout: 'horizontal', margin: 'md', contents: [
+      { type: 'box', layout: 'vertical', flex: 5, contents: [
+        txt(c.d.label, { weight: 'bold', size: 'md', color: CARD.ink }),
+        txt(c.all ? `หมดแล้ว ${c.exp} · ภายใน 30 วัน ${c.urg}` : 'ไม่มีรายการ',
+          { size: 'xs', color: c.exp ? CARD.crit : c.urg ? CARD.high : CARD.faint }),
+      ] },
+      txt(c.all, { flex: 2, align: 'end', gravity: 'center', size: 'xxl', weight: 'bold', color: c.all ? CARD.ink : '#C0C6CF' }),
+      txt('คน', { flex: 1, align: 'end', gravity: 'center', size: 'xs', color: CARD.faint }),
+    ] });
+  });
+  summaryRows.push({ type: 'separator', margin: 'lg' });
+  summaryRows.push(txt('🔴 หมดแล้ว  🟠 ≤30 วัน  🟡 31–60  🔵 61 วันขึ้นไป', { size: 'xxs', color: CARD.faint, margin: 'md', wrap: true }));
+  const summary = { type: 'bubble', size: 'mega',
+    header: { type: 'box', layout: 'vertical', backgroundColor: CARD.navy, paddingAll: '16px', contents: [
+      txt('⚠️ เอกสารใกล้หมดอายุ', { color: '#FFFFFF', weight: 'bold', size: 'lg' }),
+      txt(`ภายใน ${CONFIG.DAYS_AHEAD} วัน · ข้อมูล ณ ${thDate_(today)} · รวม ${items.length} รายการ`, { color: '#DCE6F5', size: 'xs', wrap: true }),
+    ] },
+    body: { type: 'box', layout: 'vertical', contents: summaryRows },
+  };
+  if (CONFIG.WEB_URL) summary.footer = { type: 'box', layout: 'vertical', contents: [
+    { type: 'button', style: 'primary', color: CARD.navy, height: 'sm', action: { type: 'uri', label: 'เปิดหน้ารายละเอียด', uri: CONFIG.WEB_URL } },
+  ] };
+
+  // following cards: names per document type, ROWS_PER_CARD per card
+  const bubbles = [summary];
+  counts.filter(c => c.all).forEach(c => {
+    const mine = items.filter(i => i.doc === c.d);
+    const pages = Math.ceil(mine.length / ROWS_PER_CARD);
+    for (let pg = 0; pg < pages; pg++) {
+      const rows = [];
+      mine.slice(pg * ROWS_PER_CARD, (pg + 1) * ROWS_PER_CARD).forEach((it, k) => {
+        const p = it.p;
+        let sub = [p.psid, p.dept, thDate_(it.date)].filter(Boolean).join(' · ');
+        if (CONFIG.INCLUDE_DOC_NUMBERS) {
+          const nums = [p.passportNo && 'PP ' + p.passportNo, p.alienId && 'ต่างด้าว ' + p.alienId, p.wpNo && 'WP ' + p.wpNo].filter(Boolean);
+          if (nums.length) sub += '\n' + nums.join(' · ');
+        }
+        if (k) rows.push({ type: 'separator', margin: 'md' });
+        rows.push({ type: 'box', layout: 'vertical', margin: 'md', contents: [
+          { type: 'box', layout: 'horizontal', contents: [
+            txt([p.prefix, p.nameTh].filter(Boolean).join(' '), { size: 'sm', weight: 'bold', color: CARD.ink, flex: 5, wrap: true }),
+            txt(when(it.n), { size: 'sm', weight: 'bold', color: color(it.n), flex: 3, align: 'end' }),
+          ] },
+          txt(sub, { size: 'xxs', color: CARD.muted, wrap: true }),
+        ] });
+      });
+      bubbles.push({ type: 'bubble', size: 'mega',
+        header: { type: 'box', layout: 'vertical', backgroundColor: CARD.yellow, paddingAll: '14px', contents: [
+          txt(`${c.d.label} หมดอายุ`, { weight: 'bold', size: 'md', color: CARD.ink }),
+          txt(`${c.all} คน` + (pages > 1 ? ` · หน้า ${pg + 1}/${pages}` : ''), { size: 'xs', color: CARD.ink }),
+        ] },
+        body: { type: 'box', layout: 'vertical', contents: rows },
+      });
+    }
+  });
+
+  // pack bubbles into carousels: at most 12 bubbles and ~45 KB per LINE message
+  const alt = '⚠️ เอกสารใกล้หมดอายุ: ' + counts.map(c => `${c.d.label} ${c.all}`).join(' · ');
+  const out = []; let cur = [];
+  const size = arr => Utilities.newBlob(JSON.stringify({ type: 'carousel', contents: arr })).getBytes().length;
+  bubbles.forEach(b => {
+    if (cur.length && (cur.length >= 12 || size(cur.concat([b])) > 45000)) { out.push(cur); cur = []; }
+    cur.push(b);
+  });
+  if (cur.length) out.push(cur);
+  return out.map((arr, i) => ({ type: 'flex', altText: i ? alt + ' (ต่อ)' : alt, contents: { type: 'carousel', contents: arr } }));
 }
 
 // ---------------- helpers ----------------
@@ -306,6 +411,7 @@ function showStatus() {
     `ผู้รับ: ${p.getProperty('TARGET_ID') ? 'กลุ่ม/แชตที่ลงทะเบียนไว้' : 'ทุกคนที่แอดบอทเป็นเพื่อน'}\n` +
     `ส่งอัตโนมัติ: ${trig ? 'เปิด' : 'ปิด'}\n` +
     `ส่งล่าสุด: ${last ? new Date(last).toLocaleString('th-TH') : '-'}\n` +
-    `แจ้งล่วงหน้า: ${CONFIG.DAYS_AHEAD} วัน · ส่งเลขเอกสาร: ${CONFIG.INCLUDE_DOC_NUMBERS ? 'ใช่' : 'ไม่'}`,
+    `แจ้งล่วงหน้า: ${CONFIG.DAYS_AHEAD} วัน · ส่งเลขเอกสาร: ${CONFIG.INCLUDE_DOC_NUMBERS ? 'ใช่' : 'ไม่'}\n` +
+    `รูปแบบ: ${CONFIG.MESSAGE_STYLE === 'card' ? 'การ์ดสรุป' : 'ข้อความ'}`,
     SpreadsheetApp.getUi().ButtonSet.OK);
 }
