@@ -97,7 +97,7 @@ function sendAlerts_() {
 // ---------------- reading the sheet ----------------
 function buildFromSheet_() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const tz = ss.getSpreadsheetTimeZone();
+  const tz = tz_();
   const sheets = CONFIG.SHEET_NAME ? [ss.getSheetByName(CONFIG.SHEET_NAME)] : ss.getSheets();
   for (const sh of sheets) {
     if (!sh) continue;
@@ -215,7 +215,14 @@ function parseDate_(v, dateToYmd) {
   }
   return null;
 }
-function ymd_(d, tz) { return Utilities.formatDate(d, tz, 'yyyy-M-d').split('-').map(Number); }
+/** Time zone as a plain string; falls back to Bangkok when the sheet or script returns nothing usable. */
+function tz_() {
+  let tz = '';
+  try { tz = String(SpreadsheetApp.getActiveSpreadsheet().getSpreadsheetTimeZone() || '').trim(); } catch (e) {}
+  if (!tz) { try { tz = String(Session.getScriptTimeZone() || '').trim(); } catch (e) {} }
+  return tz || 'Asia/Bangkok';
+}
+function ymd_(d, tz) { return Utilities.formatDate(d, String(tz || 'Asia/Bangkok'), 'yyyy-M-d').split('-').map(Number); }
 function thDate_(a) { return `${a[2]} ${TH_MONTHS[a[1] - 1]} ${a[0] + 543}`; }
 function esc_(s) { return String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
 
@@ -282,7 +289,7 @@ function scheduleDaily() { schedule_(b => b.everyDays(1), 'ทุกวัน');
 function scheduleWeekly() { schedule_(b => b.onWeekDay(ScriptApp.WeekDay.MONDAY), 'ทุกวันจันทร์'); }
 function schedule_(fn, label) {
   removeTriggers_();
-  const tz = SpreadsheetApp.getActiveSpreadsheet().getSpreadsheetTimeZone();
+  const tz = tz_();
   fn(ScriptApp.newTrigger('sendAlertsScheduled').timeBased()).atHour(CONFIG.SEND_HOUR).inTimezone(tz).create();
   SpreadsheetApp.getUi().alert(`ตั้งแล้ว: ส่งอัตโนมัติ${label} ช่วง ${CONFIG.SEND_HOUR}:00–${CONFIG.SEND_HOUR + 1}:00 น. (${tz})`);
 }
