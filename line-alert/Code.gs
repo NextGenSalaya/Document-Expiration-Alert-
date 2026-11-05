@@ -78,7 +78,9 @@ function previewAlerts() {
 function sendAlertsNow() {
   const ui = SpreadsheetApp.getUi();
   const r = sendAlerts_();
-  ui.alert(r.sent ? `ส่งแล้ว ${r.total} รายการ (${r.messages}) ไปที่ ${r.target}` : 'ไม่มีรายการที่ต้องแจ้ง จึงไม่ได้ส่ง');
+  if (!r.sent) { ui.alert('ไม่มีรายการที่ต้องแจ้ง จึงไม่ได้ส่ง'); return; }
+  ui.alert(`[เวอร์ชันการ์ด] ส่งแล้ว ${r.total} รายการ (${r.messages}) ไปที่ ${r.target}` +
+    (r.fallback ? `\n\nLINE ไม่รับการ์ด จึงส่งเป็นตัวหนังสือแทน\nเหตุผลจาก LINE:\n${r.fallback.slice(0, 800)}` : ''));
 }
 
 /** ตัวที่ trigger อัตโนมัติเรียกใช้ */
@@ -90,7 +92,7 @@ function sendAlerts_() {
   if (!messages.length && CONFIG.SKIP_IF_EMPTY) return { sent: false, total: 0 };
   const textMsgs = (messages.length ? messages : ['✅ ไม่มีเอกสารที่จะหมดอายุภายใน ' + CONFIG.DAYS_AHEAD + ' วัน'])
     .map(t => ({ type: 'text', text: t }));
-  let msgs = textMsgs, style = 'ข้อความ';
+  let msgs = textMsgs, style = 'ข้อความตัวหนังสือ', fallback = '';
   if (CONFIG.MESSAGE_STYLE === 'card' && cards.length) {
     // Ask LINE to check the cards first (sends nothing); fall back to plain text if they are rejected.
     try {
@@ -98,9 +100,11 @@ function sendAlerts_() {
         const batch = cards.slice(i, i + 5);
         linePost_(target ? 'validate/push' : 'validate/broadcast', { messages: batch });
       }
-      msgs = cards; style = 'การ์ด';
+      msgs = cards; style = 'ข้อความแบบการ์ด';
     } catch (err) {
+      fallback = err.message;
       console.warn('LINE rejected the card layout, sending text instead: ' + err.message);
+      PropertiesService.getScriptProperties().setProperty('LAST_CARD_ERROR', String(err.message).slice(0, 1500));
     }
   }
   for (let i = 0; i < msgs.length; i += 5) { // LINE accepts up to 5 messages per request
@@ -109,7 +113,7 @@ function sendAlerts_() {
     else linePost_('broadcast', { messages: batch });
   }
   PropertiesService.getScriptProperties().setProperty('LAST_SENT', new Date().toISOString());
-  return { sent: true, total, messages: msgs.length + ' ' + style, target: target ? 'กลุ่ม/ผู้รับที่ลงทะเบียนไว้' : 'ทุกคนที่แอดบอทเป็นเพื่อน' };
+  return { sent: true, total, messages: msgs.length + ' ' + style, fallback, target: target ? 'กลุ่ม/ผู้รับที่ลงทะเบียนไว้' : 'ทุกคนที่แอดบอทเป็นเพื่อน' };
 }
 
 // ---------------- reading the sheet ----------------
